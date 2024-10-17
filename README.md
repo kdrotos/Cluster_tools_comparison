@@ -1,2 +1,2 @@
 # Cluster_tools_comparison
-Scripts and data for cluster tools comparison project
+Scripts and data for clustering algorithms/tools comparison project
