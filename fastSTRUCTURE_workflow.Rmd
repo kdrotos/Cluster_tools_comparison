@@ -1,0 +1,198 @@
+---
+title: "fastSTRUCTURE setup and use"
+author: "Katherine Drotos"
+date: "2024-05-16"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval=FALSE)
+```
+
+## Introduction
+
+This is a workflow for the use of [fastSTRUCTURE](https://rajanil.github.io/fastStructure/) (Raj et al. 2014) in a Linux environment, geared towards novice users. It assumes you have some knowledge of bash, but you don't really need to know Python in order to get this to work.
+
+Because fastSTRUCTURE was built over a decade ago, parts of the Python environment setup have deprecated, and so it's a bit more involved. This workflow assumes the user is starting from scratch, so depending on how your system is already set up, you may be able to skip some of the initial steps.
+
+## 1.0 Environment Setup
+
+fastSTRUCTURE was built under Python 2.x, so if you already have a working Python 2.x environment, you can skip ahead. For our purposes, we will work with Python 2.7.14.
+
+Note: you can also do all the following in a virtual environment if you like (see step 2.1 on how to set it up). Certain steps of the installation may kick you out of a virtual environment, so just re-activate it if that happens. If you choose not to work in a virtual environment, certain steps (such as installing dependencies) may have to be done differently.
+
+### 1.1 Install OpenSSL
+
+This step is necessary because Python/2.7's pip requires SSL in order to download packages (thanks to James Betker for figuring this out and providing a [tutorial](https://medium.com/@jbetker/how-to-build-python-2-7-with-ssl-b9e4aa26f061)!).
+
+```{bash}
+wget https://ftp.openssl.org/source/old/1.0.2/openssl-1.0.2d.tar.gz
+tar xvf openssl-1.0.2d.tar.gz
+cd openssl-1.0.2d
+./config
+make
+sudo make install
+```
+
+### 1.2 Install Python 2.7.14
+
+```{bash}
+wget https://www.python.org/ftp/python/2.7.14/Python-2.7.14.tgz
+tar xvf Python-2.7.14.tgz
+cd Python-2.7.14/
+wget https://gist.githubusercontent.com/rkitover/2d9e5baff1f1cc4f2618dee53083bd35/raw/7f33fcf5470a9f1013ac6ae7bb168368a98fe5a0/python-2.7.14-custom-static-openssl.patch
+git apply python-2.7.14-custom-static-openssl.patch
+mkdir $HOME/python27
+cd ~/Python-2.7.14
+./configure --prefix=$HOME/python27
+make && make install
+```
+
+### 1.3 Install dependencies
+
+fastSTRUCTURE requires a few dependencies in order to work. Note that while some have a range of working versions, we found that Cython was more sensitive. We found it would reliably work with v. 0.22 and v. 3.0.
+
+```{bash}
+pip install numpy==1.16.6
+pip install scipy==1.2
+pip install Cython==3.0 
+
+sudo apt-get install python2-dev libxml2-dev libxslt-dev
+sudo apt install libgsl-dev
+```
+
+### 1.4 Install and build fastSTRUCTURE
+
+The following is pulled from the [fastSTRUCTURE github](https://rajanil.github.io/fastStructure/).
+
+```{bash}
+git clone https://github.com/rajanil/fastStructure
+# OR
+wget --no-check-certificate https://github.com/rajanil/fastStructure/archive/master.tar.gz
+
+# now build the python extensions, starting by adding the following to the .bashrc in your home directory
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
+export CFLAGS="-I/usr/local/include"
+export LDFLAGS="-L/usr/local/lib"
+
+# build the extensions
+cd ~/fastStructure/vars
+python2 setup.py build_ext --inplace
+
+cd ~/fastStructure
+python2 setup.py build_ext --inplace
+```
+
+## 2.0 Using fastSTRUCTURE
+
+### 2.1 Set up virtual environment
+
+I like to run things like fastSTRUCTURE in a virtual environment. There are a few ways to start one, this is how I tend to do it.
+
+```{bash}
+virtualenv py27 -p $HOME/python27/bin/python2.7
+source py27/bin/activate
+```
+
+### 2.2 Make sure your data files are ready
+
+Ensure your input data files are in your fastSTRUCTURE main folder. fastSTRUCTURE accepts the original *structure* format, but it also accepts .bed format, which may be a little easier to convert to. For example, using *plink* (which you will need to install if you don't already have it):
+
+```{bash}
+plink --vcf data_file.vcf --make-bed --out data_file --allow-extra-chr
+```
+
+This gives `data_file.bed` as a converted file ready for input into fastSTRUCTURE. Note that the associated .bim and .fam files will also need to be in the same directory for structure.py to read the .bed correctly.
+
+### 2.3 Running fastSTRUCTURE
+
+The main fastSTRUCTURE script is structure.py. See the [fastSTRUCTURE github](https://rajanil.github.io/fastStructure/) page for the full list of options to be passed to the execution.
+
+The most basic fastSTRUCTURE run will look like this:
+
+```{bash}
+python2 structure.py -K 2 --input=data_file --output=results_file
+```
+
+where the number that follows `-K` is the number of clusters being tested in the model.
+
+You will probably want to do a test run on your data (or a subset of your data) to ensure everything is working properly before doing a full run across multiple values of K. fastSTRUCTURE is fast, but depending on how large your dataset is, it can still take hours or days, so you'll want to be confident in the setup before running it. This is especially true if choosing the logistic prior, as it takes notably longer to run than the simple prior.
+
+### 2.4 Looping fastSTRUCTURE
+
+You can loop fastSTRUCTURE through multiple values of K. For example, if we wanted to test K=1 to K=8 with a logistic prior:
+
+```{bash}
+for k in {1,2,3,4,5,6,7,8};
+do
+python2 structure.py -K $k --input=data_file --output=results_file --prior=logistic;
+done
+```
+
+### 2.5 Choosing K
+
+fastSTRUCTURE includes a specific script to aid in identifying which K value may be optimal for your data, which can be used like so:
+
+```{bash}
+python2 chooseK.py --input=results_file
+```
+
+Note here that `input` needs your results file (from `ouput` above), not your original input file.
+
+The chooseK.py execution will yield two results:
+
+-   Model complexity that maximizes marginal likelihood
+
+-   Model components used to explain structure in data
+
+Often, these two numbers will not be the same. In essence, the model complexity describes the number of clusters with the best likelihood, and the model components explain the most ancestry. For a more detailed explanation, see Raj et al. 2014.
+
+## 3.0 Additional info
+
+### 3.1 Running fastSTRUCTURE in the background
+
+If you are working on a local machine and want fastSTRUCTURE to run in the background, one of the solutions is to use [`tmux`](https://github.com/tmux/tmux/wiki). This is a terminal multiplexer, which means that it will allow you to run a session, 'detach' from it, and go run another. In this way, you can get fastSTRUCTURE running and then go on with other work.
+
+Using `tmux` is simple: all you have to do is start it, and then input your execution. For example:
+
+```{bash}
+tmux
+
+python2 structure.py -K 2 --input=data_file --output=results_file --prior=logistic
+```
+
+There are several ways to end a `tmux` session, so I recommend searching for one that suits your workflow and setup.
+
+### 3.2 Doing multiple runs of fastSTRUCTURE for a given K
+
+There is some debate over whether multiple runs for a given K value are necessary for fastSTRUCTURE, given that it automatically performs iterations. Raj et al. (2014) briefly touches on this on p. 582. If you suspect your dataset contains subtle structure, it is likely that conducting repeated runs will be helpful to prevent overfitting of the model.
+
+### 3.3 Pip problems
+
+I've found that sometimes the environment doesn't install pip correctly (i.e., pip appears as installed, but then you the error "no module called pip" or similar). If that happens, you can try installing a Python 2.7-friendly version of pip manually:
+
+```{bash}
+# make sure pip is there
+sudo python2 -m pip install -U --force-reinstall pip==9.0.3
+
+# if it isn't:
+curl https://bootstrap.pypa.io/pip/2.7/get-pip.py
+# or 
+wget -P ~/.local/lib https://bootstrap.pypa.io/pip/2.7/get-pip.py
+python2.7 ~/.local/lib/get-pip.py --user 
+#if using bash
+printf "\nPATH=\$PATH:~/.local/bin/" >> ~/.bashrc
+source ~/.bashrc
+```
+
+### 3.4 Other errors
+
+Common errors I've encountered include:
+
+-   "TypeError: Argument 'psi' has incorrect type (expected admixprop.AdmixProp, got admixprop.AdmixProp"
+
+-   "can't find modele allelefreq"
+
+These usually mean that either the version of Cython is incompatible, or wasn't installed correctly. Double check that a compatible version is installed.
+
+When in doubt, do a fresh install of everything (or at least the dependencies) from the beginning. It's annoying, but it usually solves most problems. Also check that your virtual environment hasn't deactivated, as that will also produce errors if your environment was built inside it.
