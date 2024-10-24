@@ -2,7 +2,8 @@
 title: "fastSTRUCTURE setup and use"
 author: "Katherine Drotos"
 date: "2024-05-16"
-output: word_document
+output: md_document:
+  variant: markdown_github
 ---
 
 ```{r setup, include=FALSE}
