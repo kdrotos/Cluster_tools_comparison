@@ -1,0 +1,166 @@
+---
+title: "Choosing ADMIXTURE k value"
+author: "Katherine Drotos"
+date: "2024-05-28"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message = FALSE)
+```
+
+## Introduction
+
+This workflow is for calculating the optimal k value from ADMIXTURE runs. This method considers the original ADMIXTURE documentation, and attempts to use the Evanno et al. 2005 method of using $\Delta$k instead of the smallest value of $log Pr (X|k)$.
+
+Example dataset: Humber leuciscid fish
+
+```{r}
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(data.table)
+library(ggplot2)
+library(RColorBrewer)
+library(ggthemes)
+theme_set(theme_gray())
+
+setwd("C:/Users/Katherine/OneDrive - University of Guelph/Post-doc - Mandeville/Cyprinid project/ADMIXTURE analysis/Humber_run_10_reps/")
+
+HumberADM_CVerror <- read.table("HumberADM_allruns_cv.txt", header=F, sep="")
+```
+
+Cleaning up the dataframe to make it easier to work with:
+
+```{r}
+HumberADM_CVerror <- HumberADM_CVerror %>% 
+  mutate(Run=c(1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+               2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+               3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+               4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+               5,5,5,5,5,5,5,5,5,5,5,5,5,5,
+               6,6,6,6,6,6,6,6,6,6,6,6,6,6,
+               7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+               8,8,8,8,8,8,8,8,8,8,8,8,8,8,
+               9,9,9,9,9,9,9,9,9,9,9,9,9,9,
+               10,10,10,10,10,10,10,10,10,10,10,10,10,10)) # to make a Run column
+
+HumberADM_CVerror <- subset(HumberADM_CVerror, select=-c(V1, V2)) # drop V1 and V2
+
+HumberADM_CVerror <- lapply(HumberADM_CVerror,
+                            gsub, pattern="(K=", replacement="", fixed=TRUE) # getting rid of unwanted characters
+
+HumberADM_CVerror <- lapply(HumberADM_CVerror,
+                            gsub, pattern="):", replacement="", fixed=TRUE) 
+
+names(HumberADM_CVerror)[names(HumberADM_CVerror)=='V3'] <- 'K_value' #rename columns
+names(HumberADM_CVerror)[names(HumberADM_CVerror)=='V4'] <- 'CV_error' 
+
+HumberADMCV_df <- as.data.frame(HumberADM_CVerror)
+```
+
+Per the original ADMIXTURE documentation, the optimal value of k is determined by the lowest cross-validation (CV) error value. Here, we performed a cross validation of 10, for k=1 to k=14, repeated 10 times for each value of k (using different seeds - this must be set manually, otherwise the default seed is the same).
+
+```{r}
+HumberADMCV_df$K_value <- factor(HumberADMCV_df$K_value, 
+                                 levels=c("1","2","3","4","5","6","7","8","9","10","11","12","13","14"))
+
+HumberADMCV_df %>% 
+  ggplot(aes(x=K_value, y=CV_error)) +
+  geom_point()
+```
+
+The lowest CV error value here is at k=6, but there is also substantial variation across replicates above k=5. This illustrates that a single run at a single seed is insufficient, especially when there is uncertainty regarding the biological reality of the population structure (i.e., how many clusters are hypothesized to be there).
+
+## Evanno et al. 2005 method
+
+### Step 1: Taking the mean across runs
+
+The first step in the Evanno et al. 2005 method is to plot the means of all runs across k values.
+
+```{r}
+HumberADMCV_df <- transform(HumberADMCV_df, CV_error=as.numeric(CV_error)) # had to make CV_error numeric
+
+HumberADMCV_df %>%
+  mutate(mean=mean(CV_error),
+         .by=K_value) %>%
+  mutate(sd = sd(CV_error),
+          .by=K_value) %>%
+  ggplot(aes(x=K_value, y=mean)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd), width=0.2) +
+  geom_line(aes(group=1))
+```
+
+Plotted another way to still see the spread of the original data (blue dots represent the means):
+
+```{r}
+HumberADMCV_df %>%
+  mutate(mean=mean(CV_error),
+         .by=K_value) %>%
+  ggplot(aes(x=K_value, y=CV_error)) +
+  geom_boxplot() +
+  geom_point(aes(y=mean), color="blue", size=3)
+```
+
+### Step 2: Calculating the rate of change
+
+From Evanno et al. 2005: "Second, we [plot] the mean difference between successive likelihood values of *K*: $L'(K) = L(K) - L(K-1)$"
+
+In R:
+
+```{r}
+HumberADMCV_df %>%
+  arrange(Run, K_value) |>
+    mutate(rate = CV_error - lag(CV_error)) %>%
+    mutate(sd = sd(rate),
+          .by=K_value) %>%
+    mutate(meanrate = mean(rate),
+           .by=K_value) %>%
+#    mutate(sdrate = sd(meanrate),
+ #          .by=K_value) %>%
+  ggplot(aes(x=K_value, y=meanrate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=meanrate-sd, ymax=meanrate+sd), width=0.2) +
+  geom_line(aes(group=1))
+```
+
+### Step 3: Absolute values of the second order rate of change
+
+Next, we calculate the "absolute values of the second order rate of change of the likelihood distribution" as: $|L''(K)|=|L'(K+1)-L'(K)|$
+
+In R:
+
+```{r}
+HumberADMCV_df %>%
+  arrange(Run, K_value) |>
+  mutate(secondrate = abs((lead(CV_error)-CV_error) -(CV_error - lag(CV_error)))) %>% 
+  mutate(srmean = mean(secondrate),
+         .by=K_value) %>%
+  mutate(srsd=sd(secondrate),
+         .by=K_value) %>%
+  ggplot(aes(x=K_value, y=srmean)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=srmean-srsd, ymax=srmean+srsd), width=0.2) +
+  geom_line(aes(group=1))
+```
+
+### Step 4: $\Delta$k
+
+From Evanno et al., $\Delta$k is calculated as: $\Delta k = m | L''(K)| / s[L(K)]$ where $m$ is the mean of the absolute values calculated above, and $s$ is the standard deviation of the likelihood values.
+
+```{r}
+HumberADMCV_df %>%
+  arrange(Run, K_value) |>
+  mutate(secondrate = abs((lead(CV_error)-CV_error) -(CV_error - lag(CV_error)))) %>%  
+  mutate(deltaK = mean(secondrate)/sd(CV_error),
+         .by= K_value) %>%
+  ggplot(aes(x=K_value, y=deltaK)) +
+  geom_point() +
+  geom_line(aes(group=1))
+```
+
+From this, we can see that *k*=4 clearly stands out as the selected optimal cluster model value. Coupled with the knowledge that this dataset had 4 phenotypically identified species, this makes biological sense.
